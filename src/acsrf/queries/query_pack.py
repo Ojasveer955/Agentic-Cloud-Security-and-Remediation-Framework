@@ -1,33 +1,40 @@
-"""Predefined Cypher queries for the demo dataset."""
+"""Predefined Cypher queries for the canonical SG-based graph model."""
 
 QUERY_PACK = {
-    "user_to_secret": {
-        "description": "Path from user to secret via role, policy, and bucket",
+    "internet_to_security_group": {
+        "description": "Internet-exposed security groups",
         "cypher": (
-            "MATCH p=(u:IAMUser {userName:'alice'})-[:CAN_ASSUME]->(:IAMRole)-[:HAS_POLICY]->(:IAMPolicy)-[:CAN_READ]->(:S3Bucket)-[:CONTAINS]->(s:Secret) "
-            "RETURN p"
+            "MATCH p=(:Internet)-[:CAN_REACH]->(:SecurityGroup) "
+            "RETURN p LIMIT 100"
         ),
     },
-    "internet_to_critical_compute": {
-        "description": "Internet reachability to high-criticality compute",
-        "cypher": "MATCH p=(:Internet {cidr:'0.0.0.0/0'})-[:CAN_REACH]->(e:EC2Instance {criticality:'high'}) RETURN p",
-    },
-    "assumable_privileged_roles": {
-        "description": "Assumable privileged roles",
-        "cypher": "MATCH (u:IAMUser {userName:'alice'})-[:CAN_ASSUME]->(r:IAMRole {isPrivileged:true}) RETURN u.userName, r.roleName",
-    },
-    "shortest_user_to_secret": {
-        "description": "Shortest path from user to specific secret (bounded)",
+    "internet_to_instance_via_sg": {
+        "description": "Public path from Internet to EC2 via Security Group",
         "cypher": (
-            "MATCH (u:IAMUser {userName:'alice'}), (s:Secret {name:'prod/db/password'}) "
-            "MATCH p=shortestPath((u)-[*..5]->(s)) RETURN p"
+            "MATCH p=(:Internet)-[:CAN_REACH]->(:SecurityGroup)-[:ATTACHED_TO]->(:EC2Instance) "
+            "RETURN p LIMIT 100"
         ),
     },
-    "public_path_to_secret": {
-        "description": "Public path to secret via compute pivot",
+    "internet_to_instance_sensitive_ports": {
+        "description": "Public exposure on SSH/RDP-like ports",
         "cypher": (
-            "MATCH p=(:Internet)-[:CAN_REACH]->(:EC2Instance)-[:HAS_ROLE]->(:IAMRole)-[:HAS_POLICY]->(:IAMPolicy)-[:CAN_READ]->(:S3Bucket)-[:CONTAINS]->(:Secret) "
-            "RETURN p"
+            "MATCH p=(:Internet)-[r:CAN_REACH]->(:SecurityGroup)-[:ATTACHED_TO]->(:EC2Instance) "
+            "WHERE (r.fromPort <= 22 AND r.toPort >= 22) OR (r.fromPort <= 3389 AND r.toPort >= 3389) "
+            "RETURN p LIMIT 100"
+        ),
+    },
+    "role_to_policy": {
+        "description": "IAM roles and their attached policies",
+        "cypher": (
+            "MATCH p=(r:IAMRole)-[:HAS_POLICY]->(:IAMPolicy) "
+            "RETURN p LIMIT 100"
+        ),
+    },
+    "privileged_role_to_policy": {
+        "description": "Privileged roles and their policies",
+        "cypher": (
+            "MATCH p=(r:IAMRole {isPrivileged:true})-[:HAS_POLICY]->(:IAMPolicy) "
+            "RETURN p LIMIT 100"
         ),
     },
 }

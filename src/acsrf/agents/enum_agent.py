@@ -1,4 +1,4 @@
-"""Real AWS enumeration agent for the demo MVP (read-only baseline)."""
+"""AWS enumeration agent to pull real ."""
 from __future__ import annotations
 
 import json
@@ -99,10 +99,19 @@ def _normalize(
             account_id = _extract_account_id_from_arn(policy_arn)
         if not policy_arn:
             continue
+        
+        # Extract default policy version document
+        document = None
+        for version in policy.get("PolicyVersionList", []):
+            if version.get("IsDefaultVersion"):
+                document = version.get("Document")
+                break
+
         policies.append(
             {
                 "arn": policy_arn,
                 "policyName": policy.get("PolicyName", "unknown-policy"),
+                "document": json.dumps(document) if document else None,
             }
         )
 

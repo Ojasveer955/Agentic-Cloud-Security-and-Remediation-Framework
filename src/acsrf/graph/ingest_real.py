@@ -34,7 +34,7 @@ def _merge_policy(tx, policy: Dict[str, Any], account_id: str) -> None:
     tx.run(
         """
         MERGE (p:IAMPolicy {arn: $arn})
-        SET p.policyName = $policyName
+        SET p.policyName = $policyName, p.document = $document
         WITH p
         MATCH (a:Account {accountId: $accountId})
         MERGE (p)-[:IN_ACCOUNT]->(a)

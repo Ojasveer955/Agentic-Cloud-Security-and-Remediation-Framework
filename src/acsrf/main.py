@@ -5,9 +5,7 @@ from neo4j import GraphDatabase
 from dotenv import load_dotenv
 
 from acsrf.graph.schema_init import init_constraints
-from acsrf.graph.ingest_dummy import ingest_dummy
 from acsrf.graph.ingest_real import ingest_real_enum
-from acsrf.data.dummy_cloud import get_dummy_dataset
 from acsrf.queries.query_pack import QUERY_PACK
 from acsrf.agents.enum_agent import run_real_enum_and_save
 
@@ -52,16 +50,6 @@ def _count_label(session, label: str) -> int:
     return res.single()["c"]
 
 
-def cmd_ingest_dummy(args) -> None:
-    dataset = get_dummy_dataset()
-    driver = _driver_from_args(args)
-    ingest_dummy(driver, dataset)
-    with driver.session() as session:
-        labels = ["Account", "IAMUser", "IAMRole", "IAMPolicy", "EC2Instance", "SecurityGroup", "S3Bucket", "Secret", "Internet"]
-        counts = {label: _count_label(session, label) for label in labels}
-        print("Node counts:", counts)
-    print("Ingestion complete (idempotent). Rerun should keep counts stable.")
-
 
 def cmd_enum_real(args) -> None:
     print("Running real AWS enumeration agent...")
@@ -100,9 +88,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub_init = sub.add_parser("init-db", help="Create constraints")
     sub_init.set_defaults(func=cmd_init_db)
-
-    sub_ingest = sub.add_parser("ingest-dummy", help="Ingest dummy dataset")
-    sub_ingest.set_defaults(func=cmd_ingest_dummy)
 
     sub_real = sub.add_parser("enum-real", help="Enumerate real AWS resources and ingest results")
     sub_real.set_defaults(func=cmd_enum_real)
