@@ -1,22 +1,27 @@
 // Demo queries for Neo4j Browser
 
-// Path from user to secret via role, policy, and bucket (current schema)
-MATCH p=(u:IAMUser {userName:'alice'})-[:CAN_ASSUME]->(:IAMRole)-[:HAS_POLICY]->(:IAMPolicy)-[:CAN_READ]->(:S3Bucket)-[:CONTAINS]->(s:Secret)
-RETURN p;
+// Internet-exposed security groups
+MATCH p=(:Internet)-[:CAN_REACH]->(:SecurityGroup)
+RETURN p
+LIMIT 100;
 
-// Internet reachability to high-criticality compute
-MATCH p=(:Internet {cidr:'0.0.0.0/0'})-[:CAN_REACH]->(e:EC2Instance {criticality:'high'})
-RETURN p;
+// Public path from Internet to EC2 via Security Group
+MATCH p=(:Internet)-[:CAN_REACH]->(:SecurityGroup)-[:ATTACHED_TO]->(:EC2Instance)
+RETURN p
+LIMIT 100;
 
-// Assumable privileged roles (graph view)
-MATCH p=(u:IAMUser {userName:'alice'})-[:CAN_ASSUME]->(r:IAMRole {isPrivileged:true})
-RETURN p;
+// Public exposure on SSH/RDP-like ports
+MATCH p=(:Internet)-[r:CAN_REACH]->(:SecurityGroup)-[:ATTACHED_TO]->(:EC2Instance)
+WHERE (r.fromPort <= 22 AND r.toPort >= 22) OR (r.fromPort <= 3389 AND r.toPort >= 3389)
+RETURN p
+LIMIT 100;
 
-// Public path to secret via compute pivot (current schema)
-MATCH p=(:Internet)-[:CAN_REACH]->(:EC2Instance)-[:HAS_ROLE]->(:IAMRole)-[:HAS_POLICY]->(:IAMPolicy)-[:CAN_READ]->(:S3Bucket)-[:CONTAINS]->(:Secret)
-RETURN p;
+// IAM roles and their attached policies
+MATCH p=(r:IAMRole)-[:HAS_POLICY]->(:IAMPolicy)
+RETURN p
+LIMIT 100;
 
-// Shortest path from user to specific secret (bounded)
-MATCH (u:IAMUser {userName:'alice'}), (s:Secret {name:'prod/db/password'})
-MATCH p=shortestPath((u)-[*..5]->(s))
-RETURN p;
+// Privileged roles and their policies
+MATCH p=(r:IAMRole {isPrivileged:true})-[:HAS_POLICY]->(:IAMPolicy)
+RETURN p
+LIMIT 100;
