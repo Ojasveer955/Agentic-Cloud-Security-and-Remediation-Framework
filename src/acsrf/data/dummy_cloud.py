@@ -43,6 +43,17 @@ def get_dummy_dataset() -> dict:
         },
     ]
 
+    policies = [
+        {
+            "arn": "arn:aws:iam::111111111111:policy/AdminPolicy",
+            "policyName": "AdminPolicy",
+        },
+        {
+            "arn": "arn:aws:iam::111111111111:policy/S3ReadPolicy",
+            "policyName": "S3ReadPolicy",
+        },
+    ]
+
     instances = [
         {
             "instanceId": "i-0demo12345",
@@ -89,15 +100,18 @@ def get_dummy_dataset() -> dict:
         # Account scoping
         ("IAMUser", "IN_ACCOUNT", "Account", "arn", "accountId"),
         ("IAMRole", "IN_ACCOUNT", "Account", "arn", "accountId"),
+        ("IAMPolicy", "IN_ACCOUNT", "Account", "arn", "accountId"),
         ("EC2Instance", "IN_ACCOUNT", "Account", "instanceId", "accountId"),
         ("S3Bucket", "IN_ACCOUNT", "Account", "bucketName", "accountId"),
         ("Secret", "IN_ACCOUNT", "Account", "secretId", "accountId"),
-        # Permissions and reachability
-        ("IAMUser", "CAN_ASSUME", "IAMRole", "arn", "arn"),
-        ("IAMRole", "CAN_SSM", "EC2Instance", "arn", "instanceId"),
-        ("IAMRole", "CAN_READ", "S3Bucket", "arn", "bucketName"),
-        ("S3Bucket", "CONTAINS", "Secret", "bucketName", "secretId"),
+        
+        # Permissions and reachability (The linear attack path)
         ("Internet", "CAN_REACH", "EC2Instance", "cidr", "instanceId"),
+        ("EC2Instance", "HAS_ROLE", "IAMRole", "instanceId", "arn"),
+        ("IAMUser", "CAN_ASSUME", "IAMRole", "arn", "arn"),
+        ("IAMRole", "HAS_POLICY", "IAMPolicy", "arn", "arn"),
+        ("IAMPolicy", "CAN_READ", "S3Bucket", "arn", "bucketName"),
+        ("S3Bucket", "CONTAINS", "Secret", "bucketName", "secretId"),
     ]
 
     # Relationship instances keyed by tuple identifiers
@@ -107,23 +121,24 @@ def get_dummy_dataset() -> dict:
         {"type": "IN_ACCOUNT", "from": ("IAMRole", "arn", roles[0]["arn"]), "to": ("Account", "accountId", account["accountId"]), "props": {}},
         {"type": "IN_ACCOUNT", "from": ("IAMRole", "arn", roles[1]["arn"]), "to": ("Account", "accountId", account["accountId"]), "props": {}},
         {"type": "IN_ACCOUNT", "from": ("IAMRole", "arn", roles[2]["arn"]), "to": ("Account", "accountId", account["accountId"]), "props": {}},
+        {"type": "IN_ACCOUNT", "from": ("IAMPolicy", "arn", policies[0]["arn"]), "to": ("Account", "accountId", account["accountId"]), "props": {}},
+        {"type": "IN_ACCOUNT", "from": ("IAMPolicy", "arn", policies[1]["arn"]), "to": ("Account", "accountId", account["accountId"]), "props": {}},
         {"type": "IN_ACCOUNT", "from": ("EC2Instance", "instanceId", instances[0]["instanceId"]), "to": ("Account", "accountId", account["accountId"]), "props": {}},
         {"type": "IN_ACCOUNT", "from": ("EC2Instance", "instanceId", instances[1]["instanceId"]), "to": ("Account", "accountId", account["accountId"]), "props": {}},
         {"type": "IN_ACCOUNT", "from": ("S3Bucket", "bucketName", buckets[0]["bucketName"]), "to": ("Account", "accountId", account["accountId"]), "props": {}},
         {"type": "IN_ACCOUNT", "from": ("S3Bucket", "bucketName", buckets[1]["bucketName"]), "to": ("Account", "accountId", account["accountId"]), "props": {}},
         {"type": "IN_ACCOUNT", "from": ("Secret", "secretId", secrets[0]["secretId"]), "to": ("Account", "accountId", account["accountId"]), "props": {}},
-        # Alice can assume AdminRole
-        {"type": "CAN_ASSUME", "from": ("IAMUser", "arn", users[0]["arn"]), "to": ("IAMRole", "arn", roles[0]["arn"]), "props": {"condition": "MFA"}},
-        # AdminRole can reach instances via SSM
-        {"type": "CAN_SSM", "from": ("IAMRole", "arn", roles[0]["arn"]), "to": ("EC2Instance", "instanceId", instances[0]["instanceId"]), "props": {}},
-        {"type": "CAN_SSM", "from": ("IAMRole", "arn", roles[0]["arn"]), "to": ("EC2Instance", "instanceId", instances[1]["instanceId"]), "props": {}},
-        # AdminRole can read buckets
-        {"type": "CAN_READ", "from": ("IAMRole", "arn", roles[0]["arn"]), "to": ("S3Bucket", "bucketName", buckets[0]["bucketName"]), "props": {}},
-        {"type": "CAN_READ", "from": ("IAMRole", "arn", roles[0]["arn"]), "to": ("S3Bucket", "bucketName", buckets[1]["bucketName"]), "props": {}},
-        # Buckets contain secret
-        {"type": "CONTAINS", "from": ("S3Bucket", "bucketName", buckets[1]["bucketName"]), "to": ("Secret", "secretId", secrets[0]["secretId"]), "props": {}},
-        # Internet reachability to high-criticality instance
+        
+        # The Attack Chain Links
         {"type": "CAN_REACH", "from": ("Internet", "cidr", internet["cidr"]), "to": ("EC2Instance", "instanceId", instances[0]["instanceId"]), "props": {"port": 443, "proto": "tcp"}},
+        {"type": "HAS_ROLE", "from": ("EC2Instance", "instanceId", instances[0]["instanceId"]), "to": ("IAMRole", "arn", roles[0]["arn"]), "props": {}},
+        {"type": "HAS_ROLE", "from": ("EC2Instance", "instanceId", instances[1]["instanceId"]), "to": ("IAMRole", "arn", roles[1]["arn"]), "props": {}},
+        {"type": "CAN_ASSUME", "from": ("IAMUser", "arn", users[0]["arn"]), "to": ("IAMRole", "arn", roles[0]["arn"]), "props": {"condition": "MFA"}},
+        {"type": "HAS_POLICY", "from": ("IAMRole", "arn", roles[0]["arn"]), "to": ("IAMPolicy", "arn", policies[0]["arn"]), "props": {}},
+        {"type": "HAS_POLICY", "from": ("IAMRole", "arn", roles[1]["arn"]), "to": ("IAMPolicy", "arn", policies[1]["arn"]), "props": {}},
+        {"type": "CAN_READ", "from": ("IAMPolicy", "arn", policies[0]["arn"]), "to": ("S3Bucket", "bucketName", buckets[0]["bucketName"]), "props": {}},
+        {"type": "CAN_READ", "from": ("IAMPolicy", "arn", policies[0]["arn"]), "to": ("S3Bucket", "bucketName", buckets[1]["bucketName"]), "props": {}},
+        {"type": "CONTAINS", "from": ("S3Bucket", "bucketName", buckets[1]["bucketName"]), "to": ("Secret", "secretId", secrets[0]["secretId"]), "props": {}},
     ]
 
     return {
@@ -135,4 +150,5 @@ def get_dummy_dataset() -> dict:
         "secrets": secrets,
         "internet": internet,
         "relationships": rel_instances,
+        "policies": policies,
     }

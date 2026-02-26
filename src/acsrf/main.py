@@ -30,7 +30,7 @@ def cmd_ingest_dummy(args) -> None:
     driver = _get_driver(args.uri, args.user, args.password)
     ingest_dummy(driver, dataset)
     with driver.session() as session:
-        labels = ["Account", "IAMUser", "IAMRole", "EC2Instance", "S3Bucket", "Secret", "Internet"]
+        labels = ["Account", "IAMUser", "IAMRole", "IAMPolicy", "EC2Instance", "S3Bucket", "Secret", "Internet"]
         counts = {label: _count_label(session, label) for label in labels}
         print("Node counts:", counts)
     print("Ingestion complete (idempotent). Rerun should keep counts stable.")

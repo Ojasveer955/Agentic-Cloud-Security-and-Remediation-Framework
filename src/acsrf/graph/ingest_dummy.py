@@ -11,6 +11,7 @@ ALLOWED_NODE_LABELS = {
     "S3Bucket",
     "Secret",
     "Internet",
+    'IAMPolicy'
 }
 
 
@@ -37,6 +38,18 @@ def _merge_user(tx, user: Dict[str, Any], account_id: str) -> None:
         **user,
     )
 
+def _merge_policy(tx, policy: Dict[str, Any], account_id: str) -> None:
+    tx.run(
+        """
+        MERGE (p:IAMPolicy {arn: $arn})
+        SET p.policyName = $policyName
+        WITH p
+        MATCH (a:Account {accountId: $accountId})
+        MERGE (p)-[:IN_ACCOUNT]->(a)
+        """,
+        accountId=account_id,
+        **policy,
+    )
 
 def _merge_role(tx, role: Dict[str, Any], account_id: str) -> None:
     tx.run(
@@ -132,6 +145,7 @@ def ingest_dummy(driver: Driver, dataset: Dict[str, Any]) -> None:
     secrets = dataset.get("secrets", [])
     internet = dataset.get("internet")
     rels = dataset.get("relationships", [])
+    policies = dataset.get("policies", [])
 
     with driver.session() as session:
         session.execute_write(_merge_account, account)
@@ -141,6 +155,8 @@ def ingest_dummy(driver: Driver, dataset: Dict[str, Any]) -> None:
             session.execute_write(_merge_user, user, account["accountId"])
         for role in roles:
             session.execute_write(_merge_role, role, account["accountId"])
+        for policy in policies:
+            session.execute_write(_merge_policy, policy, account["accountId"])
         for inst in instances:
             session.execute_write(_merge_instance, inst, account["accountId"])
         for bucket in buckets:
