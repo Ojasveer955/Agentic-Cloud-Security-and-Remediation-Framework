@@ -86,12 +86,22 @@ def _normalize(
     security_groups_raw: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
     role_items = iam_details.get("RoleDetailList", [])
+    user_items = iam_details.get("UserDetailList", [])
     policy_items = iam_details.get("Policies", [])
 
     account_id = None
     roles: List[Dict[str, Any]] = []
+    users: List[Dict[str, Any]] = []
     policies: List[Dict[str, Any]] = []
+    seen_policy_arns: set = set()
     role_policy_edges: List[Tuple[str, str]] = []
+    user_policy_edges: List[Tuple[str, str]] = []
+
+    def _ensure_policy(arn: str, name: str) -> None:
+        """Add a stub entry for any referenced policy not already in the list."""
+        if arn and arn not in seen_policy_arns:
+            policies.append({"arn": arn, "policyName": name, "document": None})
+            seen_policy_arns.add(arn)
 
     for policy in policy_items:
         policy_arn = policy.get("Arn")
@@ -114,6 +124,7 @@ def _normalize(
                 "document": json.dumps(document) if document else None,
             }
         )
+        seen_policy_arns.add(policy_arn)
 
     for role in role_items:
         role_arn = role.get("Arn")
@@ -137,8 +148,37 @@ def _normalize(
 
         for policy in attached:
             p_arn = policy.get("PolicyArn")
+            p_name = policy.get("PolicyName", "unknown-policy")
             if p_arn:
+                _ensure_policy(p_arn, p_name)
                 role_policy_edges.append((role_arn, p_arn))
+
+    for user in user_items:
+        user_arn = user.get("Arn")
+        user_name = user.get("UserName", "unknown-user")
+        attached = user.get("AttachedManagedPolicies", [])
+        attached_names = [p.get("PolicyName") for p in attached if p.get("PolicyName")]
+
+        if not account_id:
+            account_id = _extract_account_id_from_arn(user_arn)
+        if not user_arn:
+            continue
+
+        users.append(
+            {
+                "arn": user_arn,
+                "userName": user_name,
+                "isPrivileged": _is_likely_privileged(user_name, attached_names),
+                "mfaEnabled": None,
+            }
+        )
+
+        for policy in attached:
+            p_arn = policy.get("PolicyArn")
+            p_name = policy.get("PolicyName", "unknown-policy")
+            if p_arn:
+                _ensure_policy(p_arn, p_name)
+                user_policy_edges.append((user_arn, p_arn))
 
     normalized_instances: List[Dict[str, Any]] = []
     instance_to_sg_edges: List[Tuple[str, str]] = []
@@ -223,14 +263,17 @@ def _normalize(
             "name": "aws-account",
             "env": "unknown",
         },
+        "users": users,
         "roles": roles,
         "policies": policies,
         "instances": normalized_instances,
         "security_groups": normalized_sgs,
         "role_policy_edges": role_policy_edges,
+        "user_policy_edges": user_policy_edges,
         "instance_sg_edges": instance_to_sg_edges,
         "internet_edges": internet_edges,
         "enum_summary": {
+            "users": len(users),
             "roles": len(roles),
             "policies": len(policies),
             "instances": len(normalized_instances),
@@ -238,6 +281,25 @@ def _normalize(
             "public_ingress_edges": len(internet_edges),
         },
     }
+
+
+def _fetch_missing_policy_documents(iam_client, policies: List[Dict[str, Any]]) -> None:
+    """Fetch policy documents for any policy stub that has document=None (e.g. AWS-managed)."""
+    for policy in policies:
+        if policy.get("document") is not None:
+            continue
+        arn = policy.get("arn")
+        if not arn:
+            continue
+        try:
+            meta = iam_client.get_policy(PolicyArn=arn)
+            version_id = meta["Policy"]["DefaultVersionId"]
+            version = iam_client.get_policy_version(PolicyArn=arn, VersionId=version_id)
+            document = version["PolicyVersion"].get("Document")
+            policy["document"] = json.dumps(document) if document else None
+        except Exception as exc:  # noqa: BLE001
+            # Silently skip if access is denied or policy is not retrievable
+            print(f"[warn] Could not fetch document for {arn}: {exc}")
 
 
 def run_real_enum_and_save(artifacts_dir: str = "artifacts") -> Dict[str, Any]:
@@ -250,6 +312,9 @@ def run_real_enum_and_save(artifacts_dir: str = "artifacts") -> Dict[str, Any]:
     security_groups_raw = _paginate_security_groups(ec2_client)
 
     normalized = _normalize(iam_details, instances_raw, security_groups_raw)
+
+    # Fill in documents for AWS-managed policies that had no PolicyVersionList
+    _fetch_missing_policy_documents(iam_client, normalized["policies"])
 
     out_dir = Path(artifacts_dir)
     out_dir.mkdir(parents=True, exist_ok=True)

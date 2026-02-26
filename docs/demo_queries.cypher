@@ -25,3 +25,13 @@ LIMIT 100;
 MATCH p=(r:IAMRole {isPrivileged:true})-[:HAS_POLICY]->(:IAMPolicy)
 RETURN p
 LIMIT 100;
+
+// IAM users and their directly-attached policies
+MATCH p=(u:IAMUser)-[:HAS_POLICY]->(:IAMPolicy)
+RETURN p
+LIMIT 100;
+
+// Privileged users and their directly-attached policies
+MATCH p=(u:IAMUser {isPrivileged:true})-[:HAS_POLICY]->(:IAMPolicy)
+RETURN p
+LIMIT 100;

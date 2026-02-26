@@ -30,6 +30,20 @@ def _merge_role(tx, role: Dict[str, Any], account_id: str) -> None:
     )
 
 
+def _merge_user(tx, user: Dict[str, Any], account_id: str) -> None:
+    tx.run(
+        """
+        MERGE (u:IAMUser {arn: $arn})
+        SET u.userName = $userName, u.isPrivileged = $isPrivileged, u.mfaEnabled = $mfaEnabled
+        WITH u
+        MATCH (a:Account {accountId: $accountId})
+        MERGE (u)-[:IN_ACCOUNT]->(a)
+        """,
+        accountId=account_id,
+        **user,
+    )
+
+
 def _merge_policy(tx, policy: Dict[str, Any], account_id: str) -> None:
     tx.run(
         """
@@ -93,6 +107,18 @@ def _merge_role_policy_edge(tx, role_arn: str, policy_arn: str) -> None:
     )
 
 
+def _merge_user_policy_edge(tx, user_arn: str, policy_arn: str) -> None:
+    tx.run(
+        """
+        MATCH (u:IAMUser {arn: $userArn})
+        MATCH (p:IAMPolicy {arn: $policyArn})
+        MERGE (u)-[:HAS_POLICY]->(p)
+        """,
+        userArn=user_arn,
+        policyArn=policy_arn,
+    )
+
+
 def _merge_instance_sg_edge(tx, instance_id: str, group_id: str) -> None:
     tx.run(
         """
@@ -124,11 +150,13 @@ def _dedupe_pairs(items: Iterable[Tuple[str, str]]) -> set[Tuple[str, str]]:
 def ingest_real_enum(driver: Driver, enum_data: Dict[str, Any]) -> None:
     account = enum_data["account"]
     account_id = account["accountId"]
+    users = enum_data.get("users", [])
     roles = enum_data.get("roles", [])
     policies = enum_data.get("policies", [])
     instances = enum_data.get("instances", [])
     security_groups = enum_data.get("security_groups", [])
     role_policy_edges = _dedupe_pairs(enum_data.get("role_policy_edges", []))
+    user_policy_edges = _dedupe_pairs(enum_data.get("user_policy_edges", []))
     instance_sg_edges = _dedupe_pairs(enum_data.get("instance_sg_edges", []))
     internet_edges = enum_data.get("internet_edges", [])
 
@@ -137,6 +165,8 @@ def ingest_real_enum(driver: Driver, enum_data: Dict[str, Any]) -> None:
 
         for role in roles:
             session.execute_write(_merge_role, role, account_id)
+        for user in users:
+            session.execute_write(_merge_user, user, account_id)
         for policy in policies:
             session.execute_write(_merge_policy, policy, account_id)
         for instance in instances:
@@ -146,6 +176,8 @@ def ingest_real_enum(driver: Driver, enum_data: Dict[str, Any]) -> None:
 
         for role_arn, policy_arn in role_policy_edges:
             session.execute_write(_merge_role_policy_edge, role_arn, policy_arn)
+        for user_arn, policy_arn in user_policy_edges:
+            session.execute_write(_merge_user_policy_edge, user_arn, policy_arn)
         for instance_id, group_id in instance_sg_edges:
             session.execute_write(_merge_instance_sg_edge, instance_id, group_id)
 

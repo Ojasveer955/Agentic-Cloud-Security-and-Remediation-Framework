@@ -37,4 +37,18 @@ QUERY_PACK = {
             "RETURN p LIMIT 100"
         ),
     },
+    "user_to_policy": {
+        "description": "IAM users and their directly-attached policies",
+        "cypher": (
+            "MATCH p=(u:IAMUser)-[:HAS_POLICY]->(:IAMPolicy) "
+            "RETURN p LIMIT 100"
+        ),
+    },
+    "privileged_user_to_policy": {
+        "description": "Privileged users and their directly-attached policies",
+        "cypher": (
+            "MATCH p=(u:IAMUser {isPrivileged:true})-[:HAS_POLICY]->(:IAMPolicy) "
+            "RETURN p LIMIT 100"
+        ),
+    },
 }

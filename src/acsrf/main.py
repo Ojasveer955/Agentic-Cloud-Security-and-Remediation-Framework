@@ -61,7 +61,7 @@ def cmd_enum_real(args) -> None:
     ingest_real_enum(driver, enum_data)
 
     with driver.session() as session:
-        labels = ["Account", "IAMRole", "IAMPolicy", "EC2Instance", "SecurityGroup", "Internet"]
+        labels = ["Account", "IAMUser", "IAMRole", "IAMPolicy", "EC2Instance", "SecurityGroup", "Internet"]
         counts = {label: _count_label(session, label) for label in labels}
         print("Node counts after real enum ingest:", counts)
 
