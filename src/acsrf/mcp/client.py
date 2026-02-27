@@ -1,5 +1,5 @@
 """Placeholder MCP client for future tooling integration."""
 
-def run_tool_placeholder(tool_name: str, target: str):
+def execute_mcp_tool_placeholder(tool_name: str, target: str):
     # TODO: wire to real MCP container in later phase.
     raise NotImplementedError("MCP tooling not implemented in demo phase")

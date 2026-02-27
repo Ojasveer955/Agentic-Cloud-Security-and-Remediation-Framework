@@ -15,7 +15,7 @@ CONSTRAINTS = [
 ]
 
 
-def init_constraints(driver: Driver) -> None:
+def initialize_database_constraints(driver: Driver) -> None:
     with driver.session() as session:
         for stmt in CONSTRAINTS:
             session.run(stmt)

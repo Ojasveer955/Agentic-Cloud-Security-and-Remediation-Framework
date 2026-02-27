@@ -4,17 +4,17 @@ import os
 from neo4j import GraphDatabase
 from dotenv import load_dotenv
 
-from acsrf.graph.schema_init import init_constraints
-from acsrf.graph.ingest_real import ingest_real_enum
+from acsrf.graph.schema_init import initialize_database_constraints
+from acsrf.graph.ingest_real import ingest_aws_data_to_neo4j
 from acsrf.queries.query_pack import QUERY_PACK
-from acsrf.agents.enum_agent import run_real_enum_and_save
+from acsrf.agents.enum_agent import execute_aws_enumeration_and_save
 
 
-def _get_driver(uri: str, user: str, password: str):
+def _create_neo4j_driver(uri: str, user: str, password: str):
     return GraphDatabase.driver(uri, auth=(user, password))
 
 
-def _resolve_neo4j_config(args):
+def _get_neo4j_credentials(args):
     uri = args.uri or os.environ.get("NEO4J_URI")
     user = args.user or os.environ.get("NEO4J_USER")
     password = args.password or os.environ.get("NEO4J_PASSWORD")
@@ -34,42 +34,42 @@ def _resolve_neo4j_config(args):
     return uri, user, password
 
 
-def _driver_from_args(args):
-    uri, user, password = _resolve_neo4j_config(args)
-    return _get_driver(uri, user, password)
+def _initialize_driver_from_args(args):
+    uri, user, password = _get_neo4j_credentials(args)
+    return _create_neo4j_driver(uri, user, password)
 
 
-def cmd_init_db(args) -> None:
-    driver = _driver_from_args(args)
-    init_constraints(driver)
+def handle_init_db_command(args) -> None:
+    driver = _initialize_driver_from_args(args)
+    initialize_database_constraints(driver)
     print("Constraints ensured.")
 
 
-def _count_label(session, label: str) -> int:
+def _get_node_count_by_label(session, label: str) -> int:
     res = session.run(f"MATCH (n:{label}) RETURN count(n) AS c")
     return res.single()["c"]
 
 
 
-def cmd_enum_real(args) -> None:
+def handle_enum_real_command(args) -> None:
     print("Running real AWS enumeration agent...")
-    enum_data = run_real_enum_and_save(artifacts_dir="artifacts")
+    enum_data = execute_aws_enumeration_and_save(artifacts_dir="artifacts")
     print("Enumeration summary:", enum_data.get("enum_summary", {}))
     print("Artifacts:", enum_data.get("artifacts", {}))
 
-    driver = _driver_from_args(args)
-    ingest_real_enum(driver, enum_data)
+    driver = _initialize_driver_from_args(args)
+    ingest_aws_data_to_neo4j(driver, enum_data)
 
     with driver.session() as session:
         labels = ["Account", "IAMUser", "IAMRole", "IAMPolicy", "EC2Instance", "SecurityGroup", "Internet"]
-        counts = {label: _count_label(session, label) for label in labels}
+        counts = {label: _get_node_count_by_label(session, label) for label in labels}
         print("Node counts after real enum ingest:", counts)
 
     print("Real enum ingestion complete.")
 
 
-def cmd_run_queries(args) -> None:
-    driver = _driver_from_args(args)
+def handle_run_queries_command(args) -> None:
+    driver = _initialize_driver_from_args(args)
     with driver.session() as session:
         for name, meta in QUERY_PACK.items():
             result = session.run(meta["cypher"])
@@ -87,13 +87,13 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub_init = sub.add_parser("init-db", help="Create constraints")
-    sub_init.set_defaults(func=cmd_init_db)
+    sub_init.set_defaults(func=handle_init_db_command)
 
     sub_real = sub.add_parser("enum-real", help="Enumerate real AWS resources and ingest results")
-    sub_real.set_defaults(func=cmd_enum_real)
+    sub_real.set_defaults(func=handle_enum_real_command)
 
     sub_queries = sub.add_parser("run-queries", help="Run predefined queries")
-    sub_queries.set_defaults(func=cmd_run_queries)
+    sub_queries.set_defaults(func=handle_run_queries_command)
 
     return parser
 

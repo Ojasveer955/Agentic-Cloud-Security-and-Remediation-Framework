@@ -17,7 +17,7 @@ def _extract_account_id_from_arn(arn: str | None) -> str | None:
     return None
 
 
-def _is_likely_privileged(role_name: str, managed_policy_names: List[str]) -> bool:
+def _check_if_role_is_privileged(role_name: str, managed_policy_names: List[str]) -> bool:
     role_name_l = role_name.lower()
     if any(token in role_name_l for token in ["admin", "power", "root", "securityaudit"]):
         return True
@@ -34,7 +34,7 @@ def _is_likely_privileged(role_name: str, managed_policy_names: List[str]) -> bo
     )
 
 
-def _paginate_iam_auth_details(iam_client) -> Dict[str, Any]:
+def _fetch_all_iam_details(iam_client) -> Dict[str, Any]:
     merged: Dict[str, Any] = {
         "UserDetailList": [],
         "GroupDetailList": [],
@@ -63,7 +63,7 @@ def _paginate_iam_auth_details(iam_client) -> Dict[str, Any]:
     return merged
 
 
-def _paginate_ec2_instances(ec2_client) -> List[Dict[str, Any]]:
+def _fetch_all_ec2_instances(ec2_client) -> List[Dict[str, Any]]:
     paginator = ec2_client.get_paginator("describe_instances")
     instances: List[Dict[str, Any]] = []
     for page in paginator.paginate():
@@ -72,7 +72,7 @@ def _paginate_ec2_instances(ec2_client) -> List[Dict[str, Any]]:
     return instances
 
 
-def _paginate_security_groups(ec2_client) -> List[Dict[str, Any]]:
+def _fetch_all_security_groups(ec2_client) -> List[Dict[str, Any]]:
     paginator = ec2_client.get_paginator("describe_security_groups")
     groups: List[Dict[str, Any]] = []
     for page in paginator.paginate():
@@ -80,7 +80,7 @@ def _paginate_security_groups(ec2_client) -> List[Dict[str, Any]]:
     return groups
 
 
-def _normalize(
+def _normalize_aws_raw_data(
     iam_details: Dict[str, Any],
     instances_raw: List[Dict[str, Any]],
     security_groups_raw: List[Dict[str, Any]],
@@ -141,7 +141,7 @@ def _normalize(
             {
                 "arn": role_arn,
                 "roleName": role_name,
-                "isPrivileged": _is_likely_privileged(role_name, attached_names),
+                "isPrivileged": _check_if_role_is_privileged(role_name, attached_names),
                 "policyRefs": attached_names,
             }
         )
@@ -168,7 +168,7 @@ def _normalize(
             {
                 "arn": user_arn,
                 "userName": user_name,
-                "isPrivileged": _is_likely_privileged(user_name, attached_names),
+                "isPrivileged": _check_if_role_is_privileged(user_name, attached_names),
                 "mfaEnabled": None,
             }
         )
@@ -283,7 +283,7 @@ def _normalize(
     }
 
 
-def _fetch_missing_policy_documents(iam_client, policies: List[Dict[str, Any]]) -> None:
+def _fetch_missing_managed_policy_documents(iam_client, policies: List[Dict[str, Any]]) -> None:
     """Fetch policy documents for any policy stub that has document=None (e.g. AWS-managed)."""
     for policy in policies:
         if policy.get("document") is not None:
@@ -302,19 +302,19 @@ def _fetch_missing_policy_documents(iam_client, policies: List[Dict[str, Any]]) 
             print(f"[warn] Could not fetch document for {arn}: {exc}")
 
 
-def run_real_enum_and_save(artifacts_dir: str = "artifacts") -> Dict[str, Any]:
+def execute_aws_enumeration_and_save(artifacts_dir: str = "artifacts") -> Dict[str, Any]:
     session = boto3.Session()
     iam_client = session.client("iam")
     ec2_client = session.client("ec2")
 
-    iam_details = _paginate_iam_auth_details(iam_client)
-    instances_raw = _paginate_ec2_instances(ec2_client)
-    security_groups_raw = _paginate_security_groups(ec2_client)
+    iam_details = _fetch_all_iam_details(iam_client)
+    instances_raw = _fetch_all_ec2_instances(ec2_client)
+    security_groups_raw = _fetch_all_security_groups(ec2_client)
 
-    normalized = _normalize(iam_details, instances_raw, security_groups_raw)
+    normalized = _normalize_aws_raw_data(iam_details, instances_raw, security_groups_raw)
 
     # Fill in documents for AWS-managed policies that had no PolicyVersionList
-    _fetch_missing_policy_documents(iam_client, normalized["policies"])
+    _fetch_missing_managed_policy_documents(iam_client, normalized["policies"])
 
     out_dir = Path(artifacts_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
