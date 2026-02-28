@@ -1,20 +1,28 @@
 """CLI entrypoint for the graph-first demo MVP."""
 import argparse
+import json
 import os
 from neo4j import GraphDatabase
 from dotenv import load_dotenv
 
-from acsrf.graph.schema_init import initialize_database_constraints
-from acsrf.graph.ingest_real import ingest_aws_data_to_neo4j
+from acsrf.graph.schema_init import init_constraints
+from acsrf.graph.ingest_real import ingest_real_enum
 from acsrf.queries.query_pack import QUERY_PACK
-from acsrf.agents.enum_agent import execute_aws_enumeration_and_save
+from acsrf.agents.enum_agent import run_real_enum_and_save
+from acsrf.agents.nl2cypher.agent import (
+    run_nl2cypher,
+    UnsafeCypherError,
+    UnsupportedQueryError,
+)
+from acsrf.graph.viz import generate_html_visualizer
+from acsrf.llm import get_llm_backend
 
 
-def _create_neo4j_driver(uri: str, user: str, password: str):
+def _get_driver(uri: str, user: str, password: str):
     return GraphDatabase.driver(uri, auth=(user, password))
 
 
-def _get_neo4j_credentials(args):
+def _resolve_neo4j_config(args):
     uri = args.uri or os.environ.get("NEO4J_URI")
     user = args.user or os.environ.get("NEO4J_USER")
     password = args.password or os.environ.get("NEO4J_PASSWORD")
@@ -34,48 +42,113 @@ def _get_neo4j_credentials(args):
     return uri, user, password
 
 
-def _initialize_driver_from_args(args):
-    uri, user, password = _get_neo4j_credentials(args)
-    return _create_neo4j_driver(uri, user, password)
+def _driver_from_args(args):
+    uri, user, password = _resolve_neo4j_config(args)
+    return _get_driver(uri, user, password)
 
 
-def handle_init_db_command(args) -> None:
-    driver = _initialize_driver_from_args(args)
-    initialize_database_constraints(driver)
+def cmd_init_db(args) -> None:
+    driver = _driver_from_args(args)
+    init_constraints(driver)
     print("Constraints ensured.")
 
 
-def _get_node_count_by_label(session, label: str) -> int:
+def _count_label(session, label: str) -> int:
     res = session.run(f"MATCH (n:{label}) RETURN count(n) AS c")
     return res.single()["c"]
 
 
 
-def handle_enum_real_command(args) -> None:
+def cmd_enum_real(args) -> None:
     print("Running real AWS enumeration agent...")
-    enum_data = execute_aws_enumeration_and_save(artifacts_dir="artifacts")
+    enum_data = run_real_enum_and_save(artifacts_dir="artifacts")
     print("Enumeration summary:", enum_data.get("enum_summary", {}))
     print("Artifacts:", enum_data.get("artifacts", {}))
 
-    driver = _initialize_driver_from_args(args)
-    ingest_aws_data_to_neo4j(driver, enum_data)
+    driver = _driver_from_args(args)
+    ingest_real_enum(driver, enum_data)
 
     with driver.session() as session:
         labels = ["Account", "IAMUser", "IAMRole", "IAMPolicy", "EC2Instance", "SecurityGroup", "Internet"]
-        counts = {label: _get_node_count_by_label(session, label) for label in labels}
+        counts = {label: _count_label(session, label) for label in labels}
         print("Node counts after real enum ingest:", counts)
 
     print("Real enum ingestion complete.")
 
 
-def handle_run_queries_command(args) -> None:
-    driver = _initialize_driver_from_args(args)
+def cmd_run_queries(args) -> None:
+    driver = _driver_from_args(args)
     with driver.session() as session:
         for name, meta in QUERY_PACK.items():
             result = session.run(meta["cypher"])
             rows = list(result)
             print(f"[{name}] {meta['description']} -> rows: {len(rows)}")
     print("Queries executed. Inspect Neo4j Browser for graph paths.")
+
+
+def cmd_query_nl(args) -> None:
+    question = args.question
+    print(f"\n{'='*60}")
+    print(f"  NL2Cypher Query Agent")
+    print(f"{'='*60}")
+    print(f"  Question: {question}")
+    print(f"{'='*60}\n")
+
+    driver = _driver_from_args(args)
+    llm = get_llm_backend()
+
+    try:
+        result = run_nl2cypher(question, driver, llm, summarize=not args.no_summary)
+    except UnsafeCypherError as exc:
+        print(f"[BLOCKED] {exc}")
+        return
+    except UnsupportedQueryError as exc:
+        print(f"[UNSUPPORTED] {exc}")
+        return
+
+    # Generated Cypher
+    print("Generated Cypher:")
+    print(f"  {result.cypher}\n")
+
+    # Row count
+    print(f"Results: {len(result.rows)} row(s) returned\n")
+
+    # Graph visualization data
+    if result.has_graph:
+        g = result.graph_data
+        print(f"Graph data: {len(g['nodes'])} nodes, {len(g['edges'])} edges")
+        print("  Nodes:")
+        for node in g["nodes"][:15]:
+            label = node["labels"][0] if node["labels"] else "?"
+            print(f"    [{label}] {node['display']}")
+        if len(g["nodes"]) > 15:
+            print(f"    ... and {len(g['nodes']) - 15} more")
+        print("  Edges:")
+        for edge in g["edges"][:15]:
+            print(f"    -[:{edge['type']}]->")
+        if len(g["edges"]) > 15:
+            print(f"    ... and {len(g['edges']) - 15} more")
+        print()
+
+    # Summary
+    if result.summary:
+        print("Security Summary:")
+        print(result.summary)
+        print()
+
+    # Save full result to artifacts
+    from pathlib import Path as FilePath
+    out_dir = FilePath("artifacts")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / "nl2cypher_last_result.json"
+    out_path.write_text(result.to_json(), encoding="utf-8")
+    print(f"Full JSON result saved to: {out_path}")
+
+    # Auto-generate HTML visualizer if we have graph data
+    if result.has_graph:
+        viz_path = out_dir / "graph_viz.html"
+        generate_html_visualizer(question, result.graph_data, result.summary, viz_path)
+        print(f"Graph Plotly HTML generated at: file:///{viz_path.absolute().as_posix()}")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -87,13 +160,18 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub_init = sub.add_parser("init-db", help="Create constraints")
-    sub_init.set_defaults(func=handle_init_db_command)
+    sub_init.set_defaults(func=cmd_init_db)
 
     sub_real = sub.add_parser("enum-real", help="Enumerate real AWS resources and ingest results")
-    sub_real.set_defaults(func=handle_enum_real_command)
+    sub_real.set_defaults(func=cmd_enum_real)
 
     sub_queries = sub.add_parser("run-queries", help="Run predefined queries")
-    sub_queries.set_defaults(func=handle_run_queries_command)
+    sub_queries.set_defaults(func=cmd_run_queries)
+
+    sub_nl = sub.add_parser("query-nl", help="Ask a natural-language security question")
+    sub_nl.add_argument("question", type=str, help="Your security question in plain English")
+    sub_nl.add_argument("--no-summary", action="store_true", help="Skip LLM summarization of results")
+    sub_nl.set_defaults(func=cmd_query_nl)
 
     return parser
 

@@ -6,7 +6,7 @@ from typing import Any, Dict, Iterable, Tuple
 from neo4j import Driver
 
 
-def _upsert_account_node(tx, account: Dict[str, Any]) -> None:
+def _merge_account(tx, account: Dict[str, Any]) -> None:
     tx.run(
         """
         MERGE (a:Account {accountId: $accountId})
@@ -16,7 +16,7 @@ def _upsert_account_node(tx, account: Dict[str, Any]) -> None:
     )
 
 
-def _upsert_iam_role_node(tx, role: Dict[str, Any], account_id: str) -> None:
+def _merge_role(tx, role: Dict[str, Any], account_id: str) -> None:
     tx.run(
         """
         MERGE (r:IAMRole {arn: $arn})
@@ -30,7 +30,7 @@ def _upsert_iam_role_node(tx, role: Dict[str, Any], account_id: str) -> None:
     )
 
 
-def _upsert_iam_user_node(tx, user: Dict[str, Any], account_id: str) -> None:
+def _merge_user(tx, user: Dict[str, Any], account_id: str) -> None:
     tx.run(
         """
         MERGE (u:IAMUser {arn: $arn})
@@ -44,7 +44,7 @@ def _upsert_iam_user_node(tx, user: Dict[str, Any], account_id: str) -> None:
     )
 
 
-def _upsert_iam_policy_node(tx, policy: Dict[str, Any], account_id: str) -> None:
+def _merge_policy(tx, policy: Dict[str, Any], account_id: str) -> None:
     tx.run(
         """
         MERGE (p:IAMPolicy {arn: $arn})
@@ -58,7 +58,7 @@ def _upsert_iam_policy_node(tx, policy: Dict[str, Any], account_id: str) -> None
     )
 
 
-def _upsert_ec2_instance_node(tx, instance: Dict[str, Any], account_id: str) -> None:
+def _merge_instance(tx, instance: Dict[str, Any], account_id: str) -> None:
     tx.run(
         """
         MERGE (e:EC2Instance {instanceId: $instanceId})
@@ -72,7 +72,7 @@ def _upsert_ec2_instance_node(tx, instance: Dict[str, Any], account_id: str) -> 
     )
 
 
-def _upsert_security_group_node(tx, sg: Dict[str, Any], account_id: str) -> None:
+def _merge_security_group(tx, sg: Dict[str, Any], account_id: str) -> None:
     tx.run(
         """
         MERGE (sg:SecurityGroup {groupId: $groupId})
@@ -86,7 +86,7 @@ def _upsert_security_group_node(tx, sg: Dict[str, Any], account_id: str) -> None
     )
 
 
-def _upsert_internet_node(tx, cidr: str) -> None:
+def _merge_internet(tx, cidr: str) -> None:
     tx.run(
         """
         MERGE (i:Internet {cidr: $cidr})
@@ -95,7 +95,7 @@ def _upsert_internet_node(tx, cidr: str) -> None:
     )
 
 
-def _create_role_policy_relationship(tx, role_arn: str, policy_arn: str) -> None:
+def _merge_role_policy_edge(tx, role_arn: str, policy_arn: str) -> None:
     tx.run(
         """
         MATCH (r:IAMRole {arn: $roleArn})
@@ -107,7 +107,7 @@ def _create_role_policy_relationship(tx, role_arn: str, policy_arn: str) -> None
     )
 
 
-def _create_user_policy_relationship(tx, user_arn: str, policy_arn: str) -> None:
+def _merge_user_policy_edge(tx, user_arn: str, policy_arn: str) -> None:
     tx.run(
         """
         MATCH (u:IAMUser {arn: $userArn})
@@ -119,7 +119,7 @@ def _create_user_policy_relationship(tx, user_arn: str, policy_arn: str) -> None
     )
 
 
-def _create_instance_sg_relationship(tx, instance_id: str, group_id: str) -> None:
+def _merge_instance_sg_edge(tx, instance_id: str, group_id: str) -> None:
     tx.run(
         """
         MATCH (e:EC2Instance {instanceId: $instanceId})
@@ -131,7 +131,7 @@ def _create_instance_sg_relationship(tx, instance_id: str, group_id: str) -> Non
     )
 
 
-def _create_internet_sg_relationship(tx, edge: Dict[str, Any]) -> None:
+def _merge_internet_sg_edge(tx, edge: Dict[str, Any]) -> None:
     tx.run(
         """
         MATCH (i:Internet {cidr: $cidr})
@@ -143,11 +143,11 @@ def _create_internet_sg_relationship(tx, edge: Dict[str, Any]) -> None:
     )
 
 
-def _remove_duplicate_edge_pairs(items: Iterable[Tuple[str, str]]) -> set[Tuple[str, str]]:
+def _dedupe_pairs(items: Iterable[Tuple[str, str]]) -> set[Tuple[str, str]]:
     return {(a, b) for a, b in items if a and b}
 
 
-def ingest_aws_data_to_neo4j(driver: Driver, enum_data: Dict[str, Any]) -> None:
+def ingest_real_enum(driver: Driver, enum_data: Dict[str, Any]) -> None:
     account = enum_data["account"]
     account_id = account["accountId"]
     users = enum_data.get("users", [])
@@ -155,34 +155,34 @@ def ingest_aws_data_to_neo4j(driver: Driver, enum_data: Dict[str, Any]) -> None:
     policies = enum_data.get("policies", [])
     instances = enum_data.get("instances", [])
     security_groups = enum_data.get("security_groups", [])
-    role_policy_edges = _remove_duplicate_edge_pairs(enum_data.get("role_policy_edges", []))
-    user_policy_edges = _remove_duplicate_edge_pairs(enum_data.get("user_policy_edges", []))
-    instance_sg_edges = _remove_duplicate_edge_pairs(enum_data.get("instance_sg_edges", []))
+    role_policy_edges = _dedupe_pairs(enum_data.get("role_policy_edges", []))
+    user_policy_edges = _dedupe_pairs(enum_data.get("user_policy_edges", []))
+    instance_sg_edges = _dedupe_pairs(enum_data.get("instance_sg_edges", []))
     internet_edges = enum_data.get("internet_edges", [])
 
     with driver.session() as session:
-        session.execute_write(_upsert_account_node, account)
+        session.execute_write(_merge_account, account)
 
         for role in roles:
-            session.execute_write(_upsert_iam_role_node, role, account_id)
+            session.execute_write(_merge_role, role, account_id)
         for user in users:
-            session.execute_write(_upsert_iam_user_node, user, account_id)
+            session.execute_write(_merge_user, user, account_id)
         for policy in policies:
-            session.execute_write(_upsert_iam_policy_node, policy, account_id)
+            session.execute_write(_merge_policy, policy, account_id)
         for instance in instances:
-            session.execute_write(_upsert_ec2_instance_node, instance, account_id)
+            session.execute_write(_merge_instance, instance, account_id)
         for sg in security_groups:
-            session.execute_write(_upsert_security_group_node, sg, account_id)
+            session.execute_write(_merge_security_group, sg, account_id)
 
         for role_arn, policy_arn in role_policy_edges:
-            session.execute_write(_create_role_policy_relationship, role_arn, policy_arn)
+            session.execute_write(_merge_role_policy_edge, role_arn, policy_arn)
         for user_arn, policy_arn in user_policy_edges:
-            session.execute_write(_create_user_policy_relationship, user_arn, policy_arn)
+            session.execute_write(_merge_user_policy_edge, user_arn, policy_arn)
         for instance_id, group_id in instance_sg_edges:
-            session.execute_write(_create_instance_sg_relationship, instance_id, group_id)
+            session.execute_write(_merge_instance_sg_edge, instance_id, group_id)
 
         for edge in internet_edges:
             cidr = edge.get("cidr")
             if cidr:
-                session.execute_write(_upsert_internet_node, cidr)
-                session.execute_write(_create_internet_sg_relationship, edge)
+                session.execute_write(_merge_internet, cidr)
+                session.execute_write(_merge_internet_sg_edge, edge)
