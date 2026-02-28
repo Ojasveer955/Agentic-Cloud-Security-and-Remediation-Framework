@@ -26,19 +26,17 @@ It assumes an "assumed breach" model, using a read-only role to discover vulnera
 # Setup environment
 python -m venv .venv
 . .venv/Scripts/activate
-pip install -r requirements.txt
+pip install -e .
 
 # Option A: Run Live AWS Enumeration
-$env:PYTHONPATH="src"
-python -m acsrf.main init-db
-python -m acsrf.main enum-real
+acsrf init-db
+acsrf enum-real
 
 # Option B: Run Dummy Vulnerable Path (for testing graph plotting)
-$env:PYTHONPATH="src"
 python scripts/inject_dummy_path.py
 
 # Query the Graph in Plain English
-python -m acsrf.main query-nl "What are the attack paths from the internet to a highly privileged EC2 IAM role?"
+acsrf query-nl "What are the attack paths from the internet to a highly privileged EC2 IAM role?"
 ```
 
 ## Outputs
@@ -50,9 +48,9 @@ python -m acsrf.main query-nl "What are the attack paths from the internet to a 
 While the current MVP focuses on the Graph-First Enum and NL2Cypher querying, the complete ACSRF architecture encompasses:
 1. **Cloud Enumeration (Boto3)**: Safe, read-only extraction of IAM, EC2, SG, S3 data.
 2. **Graph Mapping (Neo4j)**: Structuring resources to identify cross-boundary attack paths.
-3. **NL2Cypher Agent**: Swappable LLM Backend (Gemini APIs or On-Prem DGX H200 `vLLM` models) to query graphs naturally.
+3. **NL2Cypher Agent**: Swappable LLM Backend (Gemini APIs or On-Prem models) to query graphs naturally.
 4. **Agentic Orchestration (LangGraph)**: *(Planned)* Stateful orchestration of agents with cyclic routing and Human-in-the-Loop breakpoints.
-5. **Advanced Recon (MCP Server)**: *(Planned)* Dockerized DevSecOps tools (Prowler, Pacu, Nmap) exposed via MCP for targeted active scanning triggered by the orchestrator.
+5. **Advanced Recon (MCP Server)**: *(Planned)* Dockerized DevSecOps/Security tools (Prowler, Pacu, Nmap) exposed via MCP for targeted active scanning triggered by the orchestrator.
 6. **Remediation Agent (Terraform)**: *(Planned)* Automated, drift-aware generation of Terraform HCL configurations to patch discovered attack paths.
 
 ## Architecture Map (Schema)

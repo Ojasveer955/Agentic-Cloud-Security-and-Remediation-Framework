@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "acsrf"
+version = "0.1.0"
+description = "Agentic Cloud-Native Security & Remediation Framework"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "boto3",
+    "neo4j",
+    "python-dotenv",
+    "google-genai",
+]
+
+[project.scripts]
+acsrf = "acsrf.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
