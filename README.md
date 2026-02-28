@@ -35,26 +35,31 @@ Registers the `acsrf` CLI command globally in your virtualenv. No `PYTHONPATH` n
 ```powershell
 pip install -e .
 
-acsrf init-db
-acsrf enum-real                # OR: python scripts/inject_dummy_path.py (for dummy test data)
-acsrf query-nl "What are the attack paths from the internet to a highly privileged EC2 IAM role?"
-acsrf orchestrate --question "What are the attack paths from the internet to privileged resources?"
-acsrf orchestrate --question "..." --deep-analysis   # Holistic cross-correlation
-acsrf orchestrate --resume <thread-id>               # Resume a paused pipeline
+# Launch the full orchestrator pipeline (default)
+acsrf                                                  # Uses default security question
+acsrf --question "Show me all publicly exposed EC2s"   # Custom question
+acsrf --deep-analysis                                  # Holistic cross-correlation at the end
+acsrf --resume <thread-id>                             # Resume a paused pipeline
+
+# Individual agent subcommands (for debugging / manual control)
+acsrf init-db                  # Create Neo4j constraints
+acsrf enum-real                # Run AWS enumeration only
+acsrf query-nl "..."           # Run NL2Cypher query only
 ```
 
 ### Option B: Simple Install
 
-Uses `requirements.txt`. You must set `PYTHONPATH` to `src` before every command.
+Uses `requirements.txt`. You must set `PYTHONPATH` to `src` before every session.
 
 ```powershell
 pip install -r requirements.txt
 
 $env:PYTHONPATH = "src"
-python -m acsrf.main init-db
-python -m acsrf.main enum-real   # OR: python scripts/inject_dummy_path.py
-python -m acsrf.main query-nl "What are the attack paths from the internet to a highly privileged EC2 IAM role?"
-python -m acsrf.main orchestrate --question "What are the attack paths from the internet to privileged resources?"
+python -m acsrf.main                                                   # Launch orchestrator
+python -m acsrf.main --question "What are the attack paths to privileged roles?"
+python -m acsrf.main init-db                                           # Individual agents
+python -m acsrf.main enum-real
+python -m acsrf.main query-nl "..."
 ```
 
 ## Outputs

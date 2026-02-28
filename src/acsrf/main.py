@@ -290,14 +290,25 @@ def cmd_orchestrate(args) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="ACSRF demo (graph-first)")
+    parser = argparse.ArgumentParser(
+        description="ACSRF — Agentic Cloud-Native Security & Remediation Framework",
+    )
     parser.add_argument("--uri", default=None)
     parser.add_argument("--user", default=None)
     parser.add_argument("--password", default=None)
 
-    sub = parser.add_subparsers(dest="command", required=True)
+    # Orchestrator args on the top-level parser (default mode)
+    parser.add_argument("--question", type=str,
+                        default="What are the attack paths from the internet to privileged resources?",
+                        help="Security question for the analysis agent")
+    parser.add_argument("--deep-analysis", action="store_true",
+                        help="Run holistic cross-correlation analysis at the end")
+    parser.add_argument("--resume", type=str, default=None,
+                        help="Resume a previous pipeline run by thread ID")
 
-    sub_init = sub.add_parser("init-db", help="Create constraints")
+    sub = parser.add_subparsers(dest="command")
+
+    sub_init = sub.add_parser("init-db", help="Create Neo4j constraints")
     sub_init.set_defaults(func=cmd_init_db)
 
     sub_real = sub.add_parser("enum-real", help="Enumerate real AWS resources and ingest results")
@@ -312,10 +323,13 @@ def build_parser() -> argparse.ArgumentParser:
     sub_nl.set_defaults(func=cmd_query_nl)
 
     sub_orch = sub.add_parser("orchestrate", help="Run the full LangGraph agent pipeline")
-    sub_orch.add_argument("--question", type=str, default="What are the attack paths from the internet to privileged resources?",
+    sub_orch.add_argument("--question", type=str,
+                          default="What are the attack paths from the internet to privileged resources?",
                           help="Security question for the analysis agent")
-    sub_orch.add_argument("--deep-analysis", action="store_true", help="Run holistic cross-correlation analysis at the end")
-    sub_orch.add_argument("--resume", type=str, default=None, help="Resume a previous pipeline run by thread ID")
+    sub_orch.add_argument("--deep-analysis", action="store_true",
+                          help="Run holistic cross-correlation analysis at the end")
+    sub_orch.add_argument("--resume", type=str, default=None,
+                          help="Resume a previous pipeline run by thread ID")
     sub_orch.set_defaults(func=cmd_orchestrate)
 
     return parser
@@ -325,7 +339,13 @@ def main() -> None:
     load_dotenv()
     parser = build_parser()
     args = parser.parse_args()
-    args.func(args)
+
+    # Default to orchestrator when no subcommand is given
+    func = getattr(args, "func", None)
+    if func is None:
+        cmd_orchestrate(args)
+    else:
+        func(args)
 
 
 if __name__ == "__main__":
