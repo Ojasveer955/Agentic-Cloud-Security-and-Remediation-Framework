@@ -9,7 +9,7 @@ It assumes an "assumed breach" model, using a read-only role to discover vulnera
 ## Key Features
 - **Idempotent Ingestion**: Data pipeline runs purely in Python (no LLMs in the data path), fetching Boto3 data and mapping it to a `MERGE`-only Neo4j Cypher protocol.
 - **Natural Language Security Queries**: Ask questions like *"What are the attack paths from the internet to a highly privileged IAM role?"*
-- **AI-Powered Translation**: `google-genai` (configured via an abstract `LLMBackend`, making it swappable to on-prem VLLM deployments) translates English into read-only Cypher statements.
+- **AI-Powered Translation**: `google-genai` (configured via an abstract `LLMBackend`, making it swappable to on-prem vLLM deployments) translates English into read-only Cypher statements.
 - **Interactive Graph Visualization**: Dynamically generates standalone HTML (`artifacts/graph_viz.html`) rendering the attack paths with `vis.js`, along with an AI-generated security summary of the findings.
 
 ## Prereqs
@@ -17,7 +17,7 @@ It assumes an "assumed breach" model, using a read-only role to discover vulnera
 - Neo4j (recommended: Docker `neo4j:5` running on `localhost:7687`)
 - A `.env` file (copy from `.env.example`) populated with:
   - `NEO4J` credentials
-  - `AWS` credentials (for live cloud enumeration)
+  - `AWS` credentials (for live cloud enumeration. Permissions for the credentials: Read-only)
   - `GEMINI_API_KEY` (for the NL2Cypher Agent)
 
 ## Quickstart
@@ -26,23 +26,35 @@ It assumes an "assumed breach" model, using a read-only role to discover vulnera
 # Setup environment
 python -m venv .venv
 . .venv/Scripts/activate
+```
 
-# Install dependencies (pick one):
-pip install -e .              # Option A: Editable install (recommended for dev — registers the `acsrf` CLI command)
-pip install -r requirements.txt  # Option B: Simple install (use `python -m acsrf.main` instead of `acsrf`)
+### Option A: Editable Install (Recommended)
 
-# Populate the graph (pick one):
-acsrf init-db                 # Create Neo4j constraints
-acsrf enum-real               # Live AWS enumeration
-python scripts/inject_dummy_path.py  # OR: inject dummy test data
+Registers the `acsrf` CLI command globally in your virtualenv. No `PYTHONPATH` needed.
 
-# Query the graph in plain English
+```powershell
+pip install -e .
+
+acsrf init-db
+acsrf enum-real                # OR: python scripts/inject_dummy_path.py (for dummy test data)
 acsrf query-nl "What are the attack paths from the internet to a highly privileged EC2 IAM role?"
-
-# Run the full orchestrator pipeline (LangGraph)
 acsrf orchestrate --question "What are the attack paths from the internet to privileged resources?"
-acsrf orchestrate --question "..." --deep-analysis   # Holistic cross-correlation at the end
+acsrf orchestrate --question "..." --deep-analysis   # Holistic cross-correlation
 acsrf orchestrate --resume <thread-id>               # Resume a paused pipeline
+```
+
+### Option B: Simple Install
+
+Uses `requirements.txt`. You must set `PYTHONPATH` to `src` before every command.
+
+```powershell
+pip install -r requirements.txt
+
+$env:PYTHONPATH = "src"
+python -m acsrf.main init-db
+python -m acsrf.main enum-real   # OR: python scripts/inject_dummy_path.py
+python -m acsrf.main query-nl "What are the attack paths from the internet to a highly privileged EC2 IAM role?"
+python -m acsrf.main orchestrate --question "What are the attack paths from the internet to privileged resources?"
 ```
 
 ## Outputs
