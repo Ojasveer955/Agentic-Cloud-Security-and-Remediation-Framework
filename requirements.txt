@@ -2,3 +2,5 @@ boto3
 neo4j
 python-dotenv
 google-genai
+langgraph
+langgraph-checkpoint-sqlite

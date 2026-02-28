@@ -26,32 +26,40 @@ It assumes an "assumed breach" model, using a read-only role to discover vulnera
 # Setup environment
 python -m venv .venv
 . .venv/Scripts/activate
-pip install -e .
 
-# Option A: Run Live AWS Enumeration
-acsrf init-db
-acsrf enum-real
+# Install dependencies (pick one):
+pip install -e .              # Option A: Editable install (recommended for dev — registers the `acsrf` CLI command)
+pip install -r requirements.txt  # Option B: Simple install (use `python -m acsrf.main` instead of `acsrf`)
 
-# Option B: Run Dummy Vulnerable Path (for testing graph plotting)
-python scripts/inject_dummy_path.py
+# Populate the graph (pick one):
+acsrf init-db                 # Create Neo4j constraints
+acsrf enum-real               # Live AWS enumeration
+python scripts/inject_dummy_path.py  # OR: inject dummy test data
 
-# Query the Graph in Plain English
+# Query the graph in plain English
 acsrf query-nl "What are the attack paths from the internet to a highly privileged EC2 IAM role?"
+
+# Run the full orchestrator pipeline (LangGraph)
+acsrf orchestrate --question "What are the attack paths from the internet to privileged resources?"
+acsrf orchestrate --question "..." --deep-analysis   # Holistic cross-correlation at the end
+acsrf orchestrate --resume <thread-id>               # Resume a paused pipeline
 ```
 
 ## Outputs
 - **Raw/Normalized AWS Data**: Saved to `artifacts/aws_enum_normalized.json`
 - **Query Results JSON**: Saved to `artifacts/nl2cypher_last_result.json`
 - **Graph Plot**: Automatically generated at `artifacts/graph_viz.html` when a query outputs paths. Open this in your browser to view the interactive map and LLM summary!
+- **Orchestrator Audit Log**: Saved to `artifacts/orchestrator_audit.json` — full trace of every agent node, routing decision, and state transition.
 
 ## Full System Architecture (Vision)
 While the current MVP focuses on the Graph-First Enum and NL2Cypher querying, the complete ACSRF architecture encompasses:
-1. **Cloud Enumeration (Boto3)**: Safe, read-only extraction of IAM, EC2, SG, S3 data.
+1. **Cloud Enumeration Agent (Boto3)**: Safe, read-only extraction of IAM, EC2, SG, S3 data.
 2. **Graph Mapping (Neo4j)**: Structuring resources to identify cross-boundary attack paths.
 3. **NL2Cypher Agent**: Swappable LLM Backend (Gemini APIs or On-Prem models) to query graphs naturally.
-4. **Agentic Orchestration (LangGraph)**: *(Planned)* Stateful orchestration of agents with cyclic routing and Human-in-the-Loop breakpoints.
-5. **Advanced Recon (MCP Server)**: *(Planned)* Dockerized DevSecOps/Security tools (Prowler, Pacu, Nmap) exposed via MCP for targeted active scanning triggered by the orchestrator.
-6. **Remediation Agent (Terraform)**: *(Planned)* Automated, drift-aware generation of Terraform HCL configurations to patch discovered attack paths.
+4. **Analysis & Correlation Agent**: *(Planned)* The "brain" of the system — uses LLM reasoning over the Neo4j graph to discover and rank attack paths.
+5. **Validation Agent (MCP-Connected)**: *(Planned)* Verifies if discovered attack paths are actually exploitable (e.g., IMDS reachability, SSRF, credential dumping). Connected via MCP to a Docker container with pre-selected security tools (Prowler, Nmap, etc.).
+6. **LangGraph Orchestrator**: ✅ Stateful orchestration of all agents with cyclic routing, Human-in-the-Loop breakpoints, SqliteSaver persistence, and structured audit logging.
+7. **Remediation Agent (Terraform)**: *(Planned)* Automated, drift-aware generation of Terraform HCL configurations to patch discovered attack paths.
 
 ## Architecture Map (Schema)
 See `docs/schema.md` for a comprehensive breakdown of the modeled relationships (e.g. `(EC2Instance)-[:ASSUMES_ROLE]->(IAMRole)`).

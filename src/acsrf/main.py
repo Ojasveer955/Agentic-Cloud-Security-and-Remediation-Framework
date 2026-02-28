@@ -151,6 +151,144 @@ def cmd_query_nl(args) -> None:
         print(f"Graph Plotly HTML generated at: file:///{viz_path.absolute().as_posix()}")
 
 
+# =====================================================================
+#  orchestrate — full LangGraph pipeline
+# =====================================================================
+def cmd_orchestrate(args) -> None:
+    import uuid
+    from acsrf.orchestrator.graph import build_orchestrator_graph, save_audit_log
+
+    question = args.question
+    deep = args.deep_analysis
+    thread_id = args.resume or str(uuid.uuid4())[:8]
+
+    print(f"\n{'='*60}")
+    print(f"  ACSRF Orchestrator (LangGraph)")
+    print(f"{'='*60}")
+    print(f"  Question : {question}")
+    print(f"  Thread   : {thread_id}")
+    print(f"  Deep mode: {'ON' if deep else 'OFF'}")
+    print(f"{'='*60}\n")
+
+    compiled, checkpointer = build_orchestrator_graph()
+    config = {"configurable": {"thread_id": thread_id}}
+
+    # Initial state
+    initial_state = {
+        "nl_question": question,
+        "deep_analysis_requested": deep,
+        "loop_count": 0,
+        "cancel_requested": False,
+        "human_approved": False,
+        "audit_log": [],
+        "errors": [],
+        "findings": [],
+    }
+
+    # First run — will pause at interrupt_before nodes
+    print("[*] Starting pipeline...\n")
+    result_state = None
+
+    try:
+        for event in compiled.stream(initial_state, config, stream_mode="values"):
+            result_state = event
+            phase = event.get("current_phase", "")
+            if phase:
+                print(f"  [{phase}]")
+    except Exception as exc:
+        print(f"\n[!] Pipeline error: {exc}")
+        if result_state:
+            save_audit_log(result_state)
+            print(f"  Audit log saved to artifacts/orchestrator_audit.json")
+        return
+
+    if result_state is None:
+        print("[!] No state returned.")
+        return
+
+    # Check if we hit an interrupt (HITL gate or human escalation)
+    snapshot = compiled.get_state(config)
+    while snapshot.next:
+        interrupted_at = snapshot.next[0] if snapshot.next else "unknown"
+        print(f"\n{'='*60}")
+        print(f"  PAUSED at: {interrupted_at}")
+        print(f"{'='*60}")
+
+        # Show findings summary
+        findings = result_state.get("findings", [])
+        print(f"\n  Findings so far: {len(findings)}")
+        for f in findings:
+            sev = f.get("severity", "?")
+            title = f.get("title", "Untitled")
+            print(f"    [{sev}] {title}")
+
+        # Show errors if any
+        errors = result_state.get("errors", [])
+        if errors:
+            print(f"\n  Errors: {len(errors)}")
+            for e in errors:
+                print(f"    ! {e}")
+
+        # Human decision
+        if interrupted_at == "hitl_gate":
+            print("\n  Options:")
+            print("    [a] Approve findings → proceed to remediation")
+            print("    [r] Reject → end pipeline")
+            print("    [c] Cancel pipeline")
+            choice = input("\n  Your choice (a/r/c): ").strip().lower()
+
+            if choice == "a":
+                update = {"human_approved": True, "human_feedback": "Approved by human"}
+            elif choice == "c":
+                update = {"cancel_requested": True}
+            else:
+                update = {"human_approved": False, "human_feedback": "Rejected by human"}
+
+            compiled.update_state(config, update)
+
+        elif interrupted_at == "human_escalation":
+            print("\n  The pipeline hit its loop limit or a cancel was requested.")
+            print("  Options:")
+            print("    [c] Continue (reset loop counter)")
+            print("    [s] Stop here")
+            choice = input("\n  Your choice (c/s): ").strip().lower()
+
+            if choice == "c":
+                compiled.update_state(config, {"loop_count": 0, "cancel_requested": False})
+            else:
+                print("\n  Pipeline stopped by human.")
+                save_audit_log(result_state)
+                print(f"  Audit log saved to artifacts/orchestrator_audit.json")
+                return
+
+        # Resume from interrupt
+        print("\n[*] Resuming pipeline...\n")
+        for event in compiled.stream(None, config, stream_mode="values"):
+            result_state = event
+            phase = event.get("current_phase", "")
+            if phase:
+                print(f"  [{phase}]")
+
+        snapshot = compiled.get_state(config)
+
+    # Pipeline complete
+    print(f"\n{'='*60}")
+    print(f"  Pipeline Complete")
+    print(f"{'='*60}")
+
+    findings = result_state.get("findings", [])
+    print(f"  Total findings: {len(findings)}")
+    print(f"  Total errors: {len(result_state.get('errors', []))}")
+    print(f"  Total audit entries: {len(result_state.get('audit_log', []))}")
+
+    if result_state.get("deep_analysis_result"):
+        print(f"\n  Deep Analysis Report:")
+        print(f"  {result_state['deep_analysis_result'][:500]}...")
+
+    save_audit_log(result_state)
+    print(f"\n  Audit log saved to: artifacts/orchestrator_audit.json")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="ACSRF demo (graph-first)")
     parser.add_argument("--uri", default=None)
@@ -173,6 +311,13 @@ def build_parser() -> argparse.ArgumentParser:
     sub_nl.add_argument("--no-summary", action="store_true", help="Skip LLM summarization of results")
     sub_nl.set_defaults(func=cmd_query_nl)
 
+    sub_orch = sub.add_parser("orchestrate", help="Run the full LangGraph agent pipeline")
+    sub_orch.add_argument("--question", type=str, default="What are the attack paths from the internet to privileged resources?",
+                          help="Security question for the analysis agent")
+    sub_orch.add_argument("--deep-analysis", action="store_true", help="Run holistic cross-correlation analysis at the end")
+    sub_orch.add_argument("--resume", type=str, default=None, help="Resume a previous pipeline run by thread ID")
+    sub_orch.set_defaults(func=cmd_orchestrate)
+
     return parser
 
 
@@ -185,3 +330,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

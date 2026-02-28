@@ -38,11 +38,40 @@ class GeminiBackend:
             )
         self._client = genai.Client(api_key=key)
         self._model_name = model_name
+        self._cached_content_name: str | None = None
 
+    # ----- Context caching ------------------------------------------------
+    def cache_context(self, system_instruction: str, display_name: str = "acsrf-schema-cache") -> None:
+        """Create a server-side context cache for repeated prompt components.
+
+        Cached tokens are billed at ~75% less and skip re-processing.
+        Call this once at pipeline startup with the schema + system prompt.
+        """
+        try:
+            cache = self._client.caches.create(
+                model=self._model_name,
+                config=types.CreateCachedContentConfig(
+                    display_name=display_name,
+                    system_instruction=system_instruction,
+                    contents=["You are a cloud security analysis assistant."],
+                ),
+            )
+            self._cached_content_name = cache.name
+        except Exception:
+            # Caching is best-effort; fall back to regular calls if unsupported
+            self._cached_content_name = None
+
+    # ----- Generation -----------------------------------------------------
     def generate(self, prompt: str, *, system: str = "") -> str:
-        config = types.GenerateContentConfig(
-            system_instruction=system or None,
-        )
+        if self._cached_content_name and not system:
+            # Use cached context (system instruction is baked into the cache)
+            config = types.GenerateContentConfig(
+                cached_content=self._cached_content_name,
+            )
+        else:
+            config = types.GenerateContentConfig(
+                system_instruction=system or None,
+            )
         response = self._client.models.generate_content(
             model=self._model_name,
             contents=prompt,
