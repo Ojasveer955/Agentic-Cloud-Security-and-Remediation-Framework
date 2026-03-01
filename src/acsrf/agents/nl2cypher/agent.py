@@ -182,18 +182,42 @@ class NL2CypherResult:
     def has_graph(self) -> bool:
         return bool(self.graph_data.get("nodes"))
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict:
         return {
             "question": self.question,
             "cypher": self.cypher,
-            "row_count": len(self.rows),
             "rows": self.rows,
-            "graph": self.graph_data,
+            "graph_data": self.graph_data,
             "summary": self.summary,
         }
 
     def to_json(self, indent: int = 2) -> str:
         return json.dumps(self.to_dict(), indent=indent, default=str)
+
+
+# Maximum LLM retry attempts for Cypher generation
+MAX_RETRIES = 2
+
+# Regex to detect obviously non-Cypher responses (prose that starts with common LLM preambles)
+_PROSE_PATTERN = re.compile(
+    r"^\s*(Here|Sure|The|I |This|Based|Let me|Unfortunately|It |Note|To )",
+    re.IGNORECASE,
+)
+
+# Minimal syntax check: valid Cypher should contain at least one of these keywords
+_CYPHER_KEYWORDS = re.compile(
+    r"\b(MATCH|RETURN|WITH|UNWIND|CALL|UNION)\b",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_cypher(text: str) -> bool:
+    """Quick heuristic: does this text look like a Cypher query?"""
+    if _PROSE_PATTERN.match(text):
+        return False
+    if not _CYPHER_KEYWORDS.search(text):
+        return False
+    return True
 
 
 def run_nl2cypher(
@@ -204,6 +228,10 @@ def run_nl2cypher(
     summarize: bool = True,
 ) -> NL2CypherResult:
     """Full NL → Cypher → Execute → Visualize → Summarize pipeline.
+
+    Includes retry-with-feedback: if the LLM produces invalid Cypher,
+    the error is fed back and the LLM gets up to MAX_RETRIES additional
+    attempts to correct itself.
 
     Parameters
     ----------
@@ -221,18 +249,58 @@ def run_nl2cypher(
     NL2CypherResult
         Bundle containing generated Cypher, raw rows, graph data, and summary.
     """
-    # 1. Build prompt and generate Cypher
+    # 1. Build prompt and generate Cypher (with retries)
     schema_ctx = get_schema_context()
     system, user_prompt = build_cypher_prompt(question, schema_ctx)
-    raw_cypher = llm.generate(user_prompt, system=system)
 
-    # 2. Validate (strips fences, rejects writes)
-    cypher = _validate_cypher(raw_cypher)
+    cypher = None
+    records = None
+    last_error = None
 
-    # 3. Execute (read-only transaction)
-    with driver.session() as session:
-        result = session.run(cypher)
-        records = list(result)
+    for attempt in range(1 + MAX_RETRIES):
+        if attempt == 0:
+            prompt = user_prompt
+        else:
+            # Retry with error feedback
+            prompt = (
+                f"{user_prompt}\n\n"
+                f"YOUR PREVIOUS RESPONSE WAS REJECTED.\n"
+                f"Error: {last_error}\n"
+                f"Generate ONLY a corrected Cypher query. Nothing else."
+            )
+
+        raw_cypher = llm.generate(prompt, system=system)
+
+        try:
+            # Validate (strips fences, rejects writes)
+            cypher = _validate_cypher(raw_cypher)
+
+            # Quick heuristic: does it look like Cypher at all?
+            if not _looks_like_cypher(cypher) and _UNSUPPORTED_MARKER not in cypher:
+                raise ValueError(
+                    f"Response does not look like a valid Cypher query. "
+                    f"Got: '{cypher[:100]}...'"
+                )
+
+            # Execute (read-only transaction) to confirm it's valid
+            with driver.session() as session:
+                result = session.run(cypher)
+                records = list(result)
+
+            # Success — break out of retry loop
+            break
+
+        except (UnsafeCypherError, UnsupportedQueryError):
+            # These are intentional rejections, not retry-worthy
+            raise
+        except Exception as exc:
+            last_error = str(exc)
+            if attempt == MAX_RETRIES:
+                raise RuntimeError(
+                    f"Cypher generation failed after {1 + MAX_RETRIES} attempts. "
+                    f"Last error: {last_error}"
+                ) from exc
+            # Otherwise loop and retry
 
     # 4. Extract graph elements for visualization
     graph_data = _extract_graph_elements(records)
@@ -247,6 +315,14 @@ def run_nl2cypher(
         truncated = rows[:20]
         sum_system, sum_user = build_summarize_prompt(cypher, json.dumps(truncated, default=str))
         summary = llm.generate(sum_user, system=sum_system)
+
+        # Basic guardrail: strip any preamble the LLM might add
+        summary = summary.strip()
+        if summary and not summary.startswith("-"):
+            # Try to find where the bullets start
+            bullet_idx = summary.find("\n-")
+            if bullet_idx != -1:
+                summary = summary[bullet_idx + 1:]
 
     return NL2CypherResult(
         question=question,
